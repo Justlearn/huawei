@@ -2,7 +2,6 @@
 #define _NUPT_COMMUNICATION_H
 #include <sys/socket.h>
 #include <arpa/inet.h>
-#include <unistd.h>
 #include <pthread.h>
 #include <cstdlib>
 #include <cstring>
@@ -119,7 +118,7 @@ public:
 	int regist();
 	void recvmsg();
 	InfoType infotype();
-	std::string handleInfo(InfoType);
+	void handleInfo(InfoType);
 	std::string getRecvinfo(){return std::string(buf);}
 	std::vector<Seat> getSeatInfo();
 	std::vector<Blind> getBlindInfo();
@@ -211,10 +210,7 @@ int Player::regist(){
 void Player::recvmsg(){
 	bzero(buf,sizeof(buf));
 	int n = -1;
-	while((n = recv(sockfd,buf,BUFLEN,0)) >= 0){
-		//std::cout<<"recv: "<<std::string(buf)<<std::endl;
-		return ;
-	}
+	while((n = recv(sockfd,buf,BUFLEN,0)) >= 0);
 }
 
 Player::InfoType Player::infotype(){
@@ -352,7 +348,7 @@ void Player::notifyHandle(){
 	inquireHandle();
 }
 
-std::string Player::handleInfo(InfoType type){
+void Player::handleInfo(InfoType type){
 	pthread_t tid;
 	switch(type){
 		case SEATINFO:
@@ -405,7 +401,7 @@ std::vector<std::string> splitLine(const std::string& txt){
 	int start = 0;
 	int pos = 0;
 	int siz = txt.size();
-	std::cout<<"...while..."<<std::endl;
+	std::cout<<"...while..."<<txt<<std::endl;
 	while (start <= siz-1){
 		pos = txt.find_first_of("\n",start);
 		if (pos == std::string::npos)
@@ -414,6 +410,7 @@ std::vector<std::string> splitLine(const std::string& txt){
 		svec.push_back(str);
 		start = pos+1;
 	}
+	std::cout<<" the end..."<<std::endl;
 	return svec;
 }
 
@@ -422,14 +419,18 @@ std::vector<std::string> splitWhiteSpace(const std::string& txt){
 	int start = 0;
 	int pos = 0;
 	int siz = txt.size();
+	std::cout<<"txt:"<<txt<<" size: "<<siz<<std::endl;
 	while(start <= siz-1){
 		pos = txt.find_first_of(" ",start);
+		std::cout<<pos<<std::endl;
 		std::string str = txt.substr(start,pos-start);
 		svec.push_back(str);
 		start = pos+1;
+	//	std::cout<<"whites..."<<std::endl;
 	}
 	return svec;
 }
+
 
 std::string trim(std::string& str){
 	int pos1 = 0;
@@ -450,7 +451,11 @@ std::string trim(std::string& str){
 		return str.substr(pos1,pos2-pos1+1);
 }
 
-
+int strtoint(std::string& str){
+	int res = 0;
+	std::string tmp = trim(str);
+	return atoi(tmp.c_str());
+}
 /*****************************************************/
 
 std::vector<Player::Seat> Player::getSeatInfo(){
@@ -463,12 +468,14 @@ std::vector<Player::Seat> Player::getSeatInfo(){
 	str += buf;
 	std::cout<<"after getrecvinfo"<<std::endl;
 	std::vector<std::string> lines = splitLine(str);
-	return svec;
+//	return svec;
+	std::cout<<"size: "<<lines.size()<<std::endl;
 	for (int i=1;i<=lines.size()-2;++i){
 		std::string line = lines[i];
 		size_type pos = line.find_first_of(":",0);
 		if (pos == std::string::npos){
 			//ordinary player
+			std::cout<<" ordinary..."<<std::endl;
 			Seat tmp;
 			std::vector<std::string> words = splitWhiteSpace(line);
 			tmp.role = "NONE";
@@ -481,6 +488,7 @@ std::vector<Player::Seat> Player::getSeatInfo(){
 			continue;
 		}
 		//button or blind
+		std::cout<<" button..."<<std::endl;
 		Seat tmp;
 		tmp.role = line.substr(0,pos);
 		std::vector<std::string> words = splitWhiteSpace(line.substr(pos+2,line.size()-pos-2));
@@ -644,8 +652,6 @@ Player::Notify Player::getNotifyMsg(){
 	return getInquire();
 }
 
-
-
 double Player::cardPower(std::vector<Holdcard> myhc,std::vector<Flop> flops){
 	double result = 0.0;
 	//my handcard point
@@ -656,5 +662,4 @@ double Player::cardPower(std::vector<Holdcard> myhc,std::vector<Flop> flops){
 	int p4 = stoi(flops[1].point.trim());
 	int p5 = stoi(flops[2].point.trim());
 }
-
 #endif
