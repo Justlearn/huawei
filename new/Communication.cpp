@@ -2,11 +2,13 @@
 #define _NUPT_COMMUNICATION_H
 #include <sys/socket.h>
 #include <arpa/inet.h>
-#include <pthread.h>
+#include <unistd.h>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <string>
 #include <vector>
+#include <algorithm>
 #include <iostream>
 #define SERVER_ADDR "127.0.0.1"
 #define SERVER_PORT 6001
@@ -77,6 +79,10 @@ enum NutHand{
 	FULL_HOUSE,FOUR_OF_A_KIND,STRAIGHT_FLUSH
 };
 
+enum RoundStatus{
+	OTHERS,PREFLOPOUND,FLOPROUND,TURNROUND,RIVERROUND
+};
+
 struct Action{
 	static const std::string CHECK;
 	static const std::string CALL;//
@@ -108,6 +114,8 @@ public:
 	typedef struct Pot Pot;
 	typedef Inquire Notify;
 	typedef enum InfoType InfoType;
+	typedef enum ROUNDSTATUS RoundStatus;
+	typedef enum Color Color;
 	typedef struct Action Action;
 public:
 	Player(std::string pid,std::string pname);
@@ -119,7 +127,7 @@ public:
 	void recvmsg();
 	InfoType infotype();
 	void handleInfo(InfoType);
-	std::string getRecvinfo(){return std::string(buf);}
+	std::string getRecvinfo(){return buf;}
 	std::vector<Seat> getSeatInfo();
 	std::vector<Blind> getBlindInfo();
 	std::vector<Holdcard> getHoldCards();
@@ -131,6 +139,7 @@ public:
 	ShowDown getShowDown();
 	std::vector<Pot> getPotWin();
 	Notify getNotifyMsg();
+	Color getColor(std::string& color);
 public:
 	void seatHandle();
 	void gameoverHandle();
@@ -143,19 +152,25 @@ public:
 	void showdownHandle();
 	void potwinHandle();
 	void notifyHandle();
-private:
-	double cardPower(std::vector<Holdcard> myhc,std::vector<Flop> flops);
+public:
+	void preFlopAction();
+	void flopAction();
+	void turnAction();
+	void riverAction();
+	double Player::cardPower(std::vector<Holdcard> myhc,std::vector<Flop> flops);
 private:
 	int sockfd;
 	sockaddr_in servaddr;
 	sockaddr_in cliaddr;
 	std::string pid;//player id
 	std::string pname;//player name
-	char *buf;//recv info
+	std::string buf;//recv info
+	std::string recvInfo;//
+	RoundStatus myrs;
 	std::vector<Seat> seats;
 	Seat myseat;
 	std::vector<Blind> blinds;
-	std::vector<Holdcard> myhc;
+	std::vector<Holdcard> myhc;//2 handcards
 	Inquire inquire;
 	std::vector<Flop> flops;
 	Turn turnCard;
@@ -163,12 +178,14 @@ private:
 	ShowDown sdInfo;
 	std::vector<Pot> mypot;
 	Notify notifyInfo;
+private:
+	void putInfo(std::string& strInfo);
 };
 
 Player::Player(std::string pid,std::string pname){
 	this->pid = pid;
 	this->pname = pname;
-	buf = (char *)malloc(BUFLEN);
+	this->myrs = OTHERS;
 	sockfd = socket(AF_INET,SOCK_STREAM,0);
 	int reuse = 1;
 	setsockopt(sockfd,SOL_SOCKET,SO_REUSEADDR,&reuse,sizeof(int));
@@ -191,9 +208,7 @@ int Player::start(int servport,const char *addr){
 }
 
 void Player::over(){
-	//int close(int);//declarition
-	free(buf);
-	//close(sockfd);
+	close(sockfd);
 }
 
 int Player::regist(){
@@ -207,10 +222,49 @@ int Player::regist(){
 		return -1;
 }
 
-void Player::recvmsg(){
-	bzero(buf,sizeof(buf));
+void Player::recvmsg(){ 
+	char firstbuf[BUFLEN] = {'\0'};	
 	int n = -1;
-	while((n = recv(sockfd,buf,BUFLEN,0)) >= 0);
+	if((n = recv(sockfd,firstbuf,BUFLEN,0))<=0)
+	{
+		std::cout<<"recv failed!"<<std::endl;
+		return;
+	}
+	std::string tempstr(firstbuf);
+	recvInfo += tempstr;
+	
+	std::cout<<"before put: "<<"--->"<<recvInfo<<std::endl;
+	putInfo(recvInfo);
+	std::cout<<"after put: recvInfo"<<"--->"<<recvInfo<<std::endl;
+	std::cout<<"after put: buf "<<"--->"<<buf<<std::endl;	
+}
+
+void Player::putInfo(std::string& strInfo)
+{
+	buf.clear();
+	int pos = strInfo.find("\n",0);
+	if(pos == -1){ return; }
+	std::string strsub = strInfo.substr(0,pos-2);
+	int siz = strsub.size();
+	pos = strInfo.find(strsub,pos+1);
+	strsub = strInfo.substr(0,pos+siz+2);
+	if(pos == -1)
+	{
+		if(strsub == "game-over")
+		{
+			buf = strsub + " \n";
+			strInfo = strInfo.substr(pos+siz+4);
+		}
+		else
+		{
+			return;
+		}
+	}
+	else
+	{
+		buf = strsub;
+		strInfo = strInfo.substr(pos+siz+2);
+	}
 }
 
 Player::InfoType Player::infotype(){
@@ -260,6 +314,7 @@ void Player::seatHandle(){
 		std::cout<<"role: "<<seat.role<<" pid: "<<seat.pid;
 		std::cout<<" jetton: "<<seat.jetton<<" money: "<<seat.money<<std::endl;
 	}
+
 }
 
 void Player::gameoverHandle(){
@@ -277,6 +332,7 @@ void Player::blindHandle(){
 
 void Player::holdcardHandle(){
 	std::cout<<">>Enter holdcardHandle..."<<std::endl;
+	myrs = PREFLOPROUND;
 	myhc = getHoldCards();
 	for (int i=0;i<myhc.size();++i){
 		Holdcard hc = myhc[i];
@@ -295,10 +351,26 @@ void Player::inquireHandle(){
 		std::cout<<" action: "<<sta.action<<std::endl;
 	}
 	std::cout<<" total pot: "<<iq.potnum<<std::endl;
+	if (myrs == PREFLOPROUND ){
+		//preflop round with 2 handcards
+		//Based on Bill Chen Formula to caculate HoldCards' score
+		preFlopAction();
+	}else if (myrs == FLOPROUND){
+		//flop round with 3 public cards on board
+		flopAction();
+	}else if (myrs == TURNROUND){
+		//turn round with 
+		turnAction();
+	}else if (myrs == RIVERROUND){
+		riverAction();
+	}else{
+		return ;
+	}
 }
 
 void Player::flopHandle(){
 	std::cout<<">>Enter flopHandle..."<<std::endl;
+	myrs = FLOPROUND;
 	flops = getFlopMsg();
 	for (int i=0;i<flops.size();++i){
 		Flop fp = flops[i];
@@ -308,12 +380,14 @@ void Player::flopHandle(){
 
 void Player::turnHandle(){
 	std::cout<<">>Enter turnHandle..."<<std::endl;
+	myrs = TURNROUND;
 	turnCard = getTurnMsg();
 	std::cout<<"color: "<<turnCard.color<<" point: "<<turnCard.point<<std::endl;
 }
 
 void Player::riverHandle(){
 	std::cout<<">>Enter riverHandle..."<<std::endl;
+	myrs = RIVERROUND;
 	riverCard = getRiverMsg();
 	std::cout<<"color: "<<riverCard.color<<" point: "<<riverCard.point<<std::endl;
 }
@@ -349,7 +423,7 @@ void Player::notifyHandle(){
 }
 
 void Player::handleInfo(InfoType type){
-	pthread_t tid;
+//	pthread_t tid;
 	switch(type){
 		case SEATINFO:
 			seatHandle();
@@ -401,7 +475,7 @@ std::vector<std::string> splitLine(const std::string& txt){
 	int start = 0;
 	int pos = 0;
 	int siz = txt.size();
-	std::cout<<"...while..."<<txt<<std::endl;
+	std::cout<<"...while..."<<std::endl;
 	while (start <= siz-1){
 		pos = txt.find_first_of("\n",start);
 		if (pos == std::string::npos)
@@ -410,7 +484,7 @@ std::vector<std::string> splitLine(const std::string& txt){
 		svec.push_back(str);
 		start = pos+1;
 	}
-	std::cout<<" the end..."<<std::endl;
+	std::cout<<"...after while"<<std::endl;
 	return svec;
 }
 
@@ -419,18 +493,14 @@ std::vector<std::string> splitWhiteSpace(const std::string& txt){
 	int start = 0;
 	int pos = 0;
 	int siz = txt.size();
-	std::cout<<"txt:"<<txt<<" size: "<<siz<<std::endl;
 	while(start <= siz-1){
 		pos = txt.find_first_of(" ",start);
-		std::cout<<pos<<std::endl;
 		std::string str = txt.substr(start,pos-start);
 		svec.push_back(str);
 		start = pos+1;
-	//	std::cout<<"whites..."<<std::endl;
 	}
 	return svec;
 }
-
 
 std::string trim(std::string& str){
 	int pos1 = 0;
@@ -456,26 +526,26 @@ int strtoint(std::string& str){
 	std::string tmp = trim(str);
 	return atoi(tmp.c_str());
 }
+
+
 /*****************************************************/
 
 std::vector<Player::Seat> Player::getSeatInfo(){
 	std::cout<<">>Enter getSeatInfo..."<<std::endl;
 	typedef std::string::size_type size_type;
 	std::vector<Seat> svec;
-	std::cout<<"seat size: "<<strlen(buf)<<std::endl;
+	std::cout<<"seat size: "<<buf.size()<<std::endl;
 	std::cout<<"seat info: "<<buf<<std::endl;
 	std::string str;
 	str += buf;
 	std::cout<<"after getrecvinfo"<<std::endl;
 	std::vector<std::string> lines = splitLine(str);
 //	return svec;
-	std::cout<<"size: "<<lines.size()<<std::endl;
 	for (int i=1;i<=lines.size()-2;++i){
 		std::string line = lines[i];
 		size_type pos = line.find_first_of(":",0);
 		if (pos == std::string::npos){
 			//ordinary player
-			std::cout<<" ordinary..."<<std::endl;
 			Seat tmp;
 			std::vector<std::string> words = splitWhiteSpace(line);
 			tmp.role = "NONE";
@@ -488,7 +558,6 @@ std::vector<Player::Seat> Player::getSeatInfo(){
 			continue;
 		}
 		//button or blind
-		std::cout<<" button..."<<std::endl;
 		Seat tmp;
 		tmp.role = line.substr(0,pos);
 		std::vector<std::string> words = splitWhiteSpace(line.substr(pos+2,line.size()-pos-2));
@@ -652,14 +721,109 @@ Player::Notify Player::getNotifyMsg(){
 	return getInquire();
 }
 
+Player::Color Player::getColor(std::string& color){
+	if (color == "SPADES")
+		return SPADES;
+	if (color == "HEARTS")
+		return HEARTS;
+	if (color == "CLUBS")
+		return CLUBS;
+	if (color == "DIAMONDS")
+		return DIAMONDS;
+}
+
+
+/*
+* Utility function
+*/
+/********************************************************/
+int pointtoint(std::string& str){
+	if (str.size() == 1){
+		char cp = str[0];
+		if (cp >= '2' && cp <= '9')
+			return strtoint(str);
+		else{
+			if (cp == 'J')
+				return 11;
+			if (cp == 'Q')
+				return 12;
+			if (cp == 'K')
+				return 13;
+			if (cp == 'A')
+				return 14;
+		}
+	}else
+		return 10;//only 10 point occupy two chars	
+}
+/********************************************************/
+void Player::preFlopAction(){
+	if (myhc.size() != 2){
+		std::cout<<"Hold card's size is not correct"<<std::endl;
+		return ;
+	}
+	double res = 0;
+	//my handcard point
+	int ponit1 = pointtoint(myhc[0].point);
+	int point2 = pointtoint(myhc[1].point);
+	//my handcars color
+	Color color1 = getColor(myhc[0].color);
+	Color color2 = getColor(myhc[1].color);
+	//starting Bill Chen's Formula computing
+	int max = std::max(point1,point2);
+	int gap = std::abs(poin1-point2);
+	if (max <= 10)
+		res += max/2;//2~10
+	else{
+		if (max == 14)
+			res += 10;//A
+		else
+			res += max-5;//J,Q,K
+	}
+	if (point1 == point2){
+		//a suite
+		res *= 2;
+		if (res < 5)
+			res = 5;
+	}else{
+		//not a suite
+		if (gap == 2)
+			res -= 1;
+		if (gap == 3)
+			res -= 2;
+		if (gap == 4)
+			res -= 4;
+		if (gap >= 5)
+			res -= 5;
+	}
+	if (color1 == color2)
+		res += 2;
+	if (point1 < 12 && point2 < 12 && gap < 3)
+		res += 1;
+	int score = std::ceil(res);
+}
+
+void Player::flopAction(){
+	//3 public cards on board
+}
+
+
+void Player::turnAction(){
+	//3 public cards and 1 turn card on board
+}
+
+void Player::riverAction(){
+	//3 public cards and 1 river card on board
+}
+
 double Player::cardPower(std::vector<Holdcard> myhc,std::vector<Flop> flops){
 	double result = 0.0;
 	//my handcard point
-	int p1 = stoi(myhc[0].point.trim());
-	int p2 = stoi(myhc[1].point.trim());
+	int p1 = pointtoint(myhc[0].point);
+	int p2 = pointtoint(myhc[1].point);
 	//flop card point
-	int p3 = stoi(flops[0].point.trim());
-	int p4 = stoi(flops[1].point.trim());
-	int p5 = stoi(flops[2].point.trim());
+	int p3 = pointtoint(flops[0].point);
+	int p4 = pointtoint(flops[1].point);
+	int p5 = pointtoint(flops[2].point);
 }
+
 #endif
