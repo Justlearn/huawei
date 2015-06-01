@@ -71,7 +71,7 @@ enum InfoType{
 };
 
 enum Color{
-	SPADES,HERTS,CLUBS,DIAMONDS
+	SPADES,HEARTS,CLUBS,DIAMONDS
 };
 
 enum NutHand{
@@ -80,7 +80,7 @@ enum NutHand{
 };
 
 enum RoundStatus{
-	OTHERS,PREFLOPOUND,FLOPROUND,TURNROUND,RIVERROUND
+	OTHERS,PREFLOPROUND,FLOPROUND,TURNROUND,RIVERROUND
 };
 
 struct Action{
@@ -114,7 +114,7 @@ public:
 	typedef struct Pot Pot;
 	typedef Inquire Notify;
 	typedef enum InfoType InfoType;
-	typedef enum ROUNDSTATUS RoundStatus;
+	typedef enum RoundStatus RoundStatus;
 	typedef enum Color Color;
 	typedef struct Action Action;
 public:
@@ -132,7 +132,7 @@ public:
 	std::vector<Blind> getBlindInfo();
 	std::vector<Holdcard> getHoldCards();
 	Inquire getInquire();
-	int sendAction(std::string& action);
+	int sendAction(const std::string& action);
 	std::vector<Flop> getFlopMsg();
 	Turn getTurnMsg();
 	River getRiverMsg();
@@ -157,7 +157,7 @@ public:
 	void flopAction();
 	void turnAction();
 	void riverAction();
-	double Player::cardPower(std::vector<Holdcard> myhc,std::vector<Flop> flops);
+	double cardPower(std::vector<Holdcard> myhc,std::vector<Flop> flops);
 private:
 	int sockfd;
 	sockaddr_in servaddr;
@@ -232,11 +232,7 @@ void Player::recvmsg(){
 	}
 	std::string tempstr(firstbuf);
 	recvInfo += tempstr;
-	
-	std::cout<<"before put: "<<"--->"<<recvInfo<<std::endl;
-	putInfo(recvInfo);
-	std::cout<<"after put: recvInfo"<<"--->"<<recvInfo<<std::endl;
-	std::cout<<"after put: buf "<<"--->"<<buf<<std::endl;	
+	putInfo(recvInfo);	
 }
 
 void Player::putInfo(std::string& strInfo)
@@ -342,6 +338,7 @@ void Player::holdcardHandle(){
 
 
 void Player::inquireHandle(){
+	std::cout<<">>Enter inquireHandle..."<<std::endl;
 	Inquire iq = getInquire();
 	std::vector<Status> allStatus = iq.allStatus;
 	for (int i=0;i<allStatus.size();++i){
@@ -359,9 +356,10 @@ void Player::inquireHandle(){
 		//flop round with 3 public cards on board
 		flopAction();
 	}else if (myrs == TURNROUND){
-		//turn round with 
+		//turn round with 1 turn card added to board
 		turnAction();
 	}else if (myrs == RIVERROUND){
+		//river round with 1 river card added to board
 		riverAction();
 	}else{
 		return ;
@@ -438,7 +436,6 @@ void Player::handleInfo(InfoType type){
 			holdcardHandle();
 			break;
 		case INQUIREMSG:
-			std::cout<<">>Enter inquireHandle..."<<std::endl;
 			inquireHandle();
 			break;
 		case FLOPMSG:
@@ -457,7 +454,6 @@ void Player::handleInfo(InfoType type){
 			potwinHandle();
 			break;
 		case NOTIFY:
-			std::cout<<">>Enter notifyHandle..."<<std::endl;
 			notifyHandle();
 			break;
 		default:
@@ -475,7 +471,6 @@ std::vector<std::string> splitLine(const std::string& txt){
 	int start = 0;
 	int pos = 0;
 	int siz = txt.size();
-	std::cout<<"...while..."<<std::endl;
 	while (start <= siz-1){
 		pos = txt.find_first_of("\n",start);
 		if (pos == std::string::npos)
@@ -484,7 +479,6 @@ std::vector<std::string> splitLine(const std::string& txt){
 		svec.push_back(str);
 		start = pos+1;
 	}
-	std::cout<<"...after while"<<std::endl;
 	return svec;
 }
 
@@ -534,11 +528,8 @@ std::vector<Player::Seat> Player::getSeatInfo(){
 	std::cout<<">>Enter getSeatInfo..."<<std::endl;
 	typedef std::string::size_type size_type;
 	std::vector<Seat> svec;
-	std::cout<<"seat size: "<<buf.size()<<std::endl;
-	std::cout<<"seat info: "<<buf<<std::endl;
 	std::string str;
 	str += buf;
-	std::cout<<"after getrecvinfo"<<std::endl;
 	std::vector<std::string> lines = splitLine(str);
 //	return svec;
 	for (int i=1;i<=lines.size()-2;++i){
@@ -624,8 +615,10 @@ Player::Inquire Player::getInquire(){
 	return result;
 }
 
-int Player::sendAction(std::string& action){
-	const char *tmp = action.c_str();
+int Player::sendAction(const std::string& action){
+	std::string ret = std::string(action+" \n");
+	std::cout<<"Action: "<<ret<<std::endl;
+	const char *tmp = ret.c_str();
 	int siz = 0;
 	//send register message
 	if ((siz = send(sockfd,tmp,strlen(tmp),0)) >= 0)
@@ -763,14 +756,14 @@ void Player::preFlopAction(){
 	}
 	double res = 0;
 	//my handcard point
-	int ponit1 = pointtoint(myhc[0].point);
+	int point1 = pointtoint(myhc[0].point);
 	int point2 = pointtoint(myhc[1].point);
 	//my handcars color
 	Color color1 = getColor(myhc[0].color);
 	Color color2 = getColor(myhc[1].color);
 	//starting Bill Chen's Formula computing
 	int max = std::max(point1,point2);
-	int gap = std::abs(poin1-point2);
+	int gap = std::abs(point1-point2);
 	if (max <= 10)
 		res += max/2;//2~10
 	else{
@@ -800,19 +793,24 @@ void Player::preFlopAction(){
 	if (point1 < 12 && point2 < 12 && gap < 3)
 		res += 1;
 	int score = std::ceil(res);
+	std::cout<<"preflop score: "<<score<<std::endl;
+	sendAction(Action::CHECK);
 }
 
 void Player::flopAction(){
 	//3 public cards on board
+	sendAction(Action::CHECK);
 }
 
 
 void Player::turnAction(){
 	//3 public cards and 1 turn card on board
+	sendAction(Action::CHECK);
 }
 
 void Player::riverAction(){
 	//3 public cards and 1 river card on board
+	sendAction(Action::CHECK);
 }
 
 double Player::cardPower(std::vector<Holdcard> myhc,std::vector<Flop> flops){
