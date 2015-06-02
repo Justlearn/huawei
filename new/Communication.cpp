@@ -102,11 +102,12 @@ public:
 	typedef struct sockaddr sockaddr;
 	typedef struct Seat Seat;
 	typedef struct Blind Blind;
-	typedef struct Card Holdcard;
-	typedef struct Card Flop;
-	typedef struct Card Turn;
-	typedef struct Card River;
-	typedef struct Card Common;
+	typedef struct Card Card;
+	typedef Card Holdcard;
+	typedef Card Flop;
+	typedef Card Turn;
+	typedef Card River;
+	typedef Card Common;
 	typedef struct PlayerStatus Status;
 	typedef struct Inquire Inquire;
 	typedef struct Rank Rank;
@@ -748,6 +749,16 @@ int pointtoint(std::string& str){
 	}else
 		return 10;//only 10 point occupy two chars	
 }
+
+
+struct myComp{
+	typedef struct Card Card;
+	bool operator()(Card card1,Card card2){
+		int point1 = pointtoint(card1.point);
+		int point2 = pointtoint(card2.point);
+		return (point1 < point2);
+	}
+};
 /********************************************************/
 void Player::preFlopAction(){
 	if (myhc.size() != 2){
@@ -799,6 +810,61 @@ void Player::preFlopAction(){
 
 void Player::flopAction(){
 	//3 public cards on board
+	using std::vector;
+	typedef struct myComp Comp;
+	vector<Card> allCards(flops);
+	for (int i=0;i<myhc.size();++i)
+		allCards.push_back(myhc[i]);
+	std::sort(allCards.begin(),allCards.end(),Comp);//ascending sort
+	vector<int> pvec;
+	for (int i=0;i<allCards.size();++i)
+		pvec.push_back(pointtoint(allCards[i].point));
+	vector<Color> cvec;
+	for (int i=0;i<allCards.size();++i)
+		pvec.push_back(getColor(allCards[i].color));
+	// int point1 = pointtoint(allCards[0].point);
+	// int point2 = pointtoint(allCards[1].point);
+	// int point3 = pointtoint(allCards[2].point);
+	// int point4 = pointtoint(allCards[3].point);
+	// int point5 = pointtoint(allCards[4].point);
+
+	// Color color1 = getColor(allCards[0].color);
+	// Color color2 = getColor(allCards[1].color);
+	// Color color3 = getColor(allCards[2].color);
+	// Color color4 = getColor(allCards[3].color);
+	// Color color5 = getColor(allCards[4].color);
+	bool straight = true;
+	for (int i=1;i<pvec.size();++i){
+		if (pvec[i]-pvec[i-1] == 1)
+			continue;
+		else
+			straight = false;
+	}
+
+	bool flush = true;//same color
+	for (int i=1;i<cvec.size();++i){
+		if (cvec[i] == cvec[i-1])
+			continue;
+		else
+			flush = false;
+	}
+	if (straight && flush){//straight flush
+		if (pvec[0] == 10 && pvec[pvec.size()-1] == 14)//royal straight flush
+			sendAction(Action::ALL_IN);
+		sendAction(Action::ALL_IN);
+		return ;
+	}
+
+	bool fkind = false;//4 card with same point
+	if ((pvec[0] == pvec[1] && pvec[1] == pvec[2] && pvec[2] == pvec[3]) 
+		|| (pvec[1] == pvec[2] && pvec[2] == pvec[3] && pvec[3] == pvec[4]))
+		fkind = true;
+
+	bool fhouse = false;//a suite with 3 card same point
+	if ((pvec[0] == pvec[1] && pvec[1] != pvec[2] && (pvec[2] == pvec[3] && pvec[3] == pvec[4]))
+	 || ((pvec[0] == pvec[1] && pvec[1] == pvec[2]) && pvec[2] != pvec[3] && pvec[3] == pvec[4])
+	 fhouse = true;
+
 	sendAction(Action::CHECK);
 }
 
@@ -825,3 +891,4 @@ double Player::cardPower(std::vector<Holdcard> myhc,std::vector<Flop> flops){
 }
 
 #endif
+
